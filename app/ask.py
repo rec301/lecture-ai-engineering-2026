@@ -2,6 +2,7 @@
 
 使い方:
     uv run python -m app.ask "LoRAとは何ですか？"
+    uv run python -m app.ask --temperature 0.8 "LoRAとは何ですか？"
     uv run python -m app.ask            # 質問を省略すると、講座に固有の質問をする
 
 ツールも会話履歴も持たない「素の」呼び出し。
@@ -13,7 +14,7 @@
 import argparse
 
 from google import genai
-from google.genai import errors
+from google.genai import errors, types
 
 from app.config import MODEL, api_error_message, get_api_key
 
@@ -21,12 +22,26 @@ from app.config import MODEL, api_error_message, get_api_key
 DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何ですか？"
 
 
-def ask(question: str) -> str:
+def ask(question: str, temperature: float | None = None) -> str:
     client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(model=MODEL, contents=question)
+    if temperature is None:
+        response = client.models.generate_content(model=MODEL, contents=question)
+    else:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=question,
+            config=types.GenerateContentConfig(temperature=temperature),
+        )
 
-    # TODO(第1回 演習): response.usage_metadata から
-    #   入力トークン数と出力トークン数を表示してみよう（Copilotに頼んでよい）
+    usage = response.usage_metadata
+    if usage is None:
+        input_tokens = output_tokens = "不明"
+    else:
+        input_tokens = usage.prompt_token_count
+        output_tokens = usage.candidates_token_count
+        input_tokens = "不明" if input_tokens is None else input_tokens
+        output_tokens = "不明" if output_tokens is None else output_tokens
+    print(f"[トークン数] 入力: {input_tokens}, 出力: {output_tokens}")
 
     return response.text
 
@@ -34,12 +49,20 @@ def ask(question: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="素のLLMに質問する")
     parser.add_argument("question", nargs="?", default=DEFAULT_QUESTION)
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=None,
+        help="生成時のtemperature（省略時はAPI／モデルの既定設定）",
+    )
     args = parser.parse_args()
 
     print(f"[model] {MODEL}")
+    if args.temperature is not None:
+        print(f"[temperature] {args.temperature}")
     print(f"[質問] {args.question}\n")
     try:
-        print(ask(args.question))
+        print(ask(args.question, args.temperature))
     except errors.APIError as e:
         print(api_error_message(e.code, e.message))
         raise SystemExit(1)
